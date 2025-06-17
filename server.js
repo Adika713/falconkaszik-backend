@@ -8,7 +8,12 @@ const jwt = require('jsonwebtoken');
 const app = express();
 
 // Middleware
-app.use(cors({ origin: process.env.FRONTEND_URL, credentials: true }));
+app.use(cors({ 
+    origin: process.env.FRONTEND_URL, 
+    credentials: true,
+    allowedHeaders: ['Content-Type', 'Authorization'],
+    methods: ['GET', 'POST', 'PUT', 'DELETE']
+}));
 app.use(express.json());
 
 // Environment variables
@@ -16,8 +21,8 @@ const CLIENT_ID = process.env.TWITCH_CLIENT_ID || 'z2n5k9lu6ja19cq64d1n1pekwr8pc
 const CLIENT_SECRET = process.env.TWITCH_CLIENT_SECRET || '4uisld97aaj8rvuf268kbd2c4wugtz';
 const REDIRECT_URI = process.env.REDIRECT_URI || 'https://falconkaszik-backend.onrender.com/auth/twitch/callback';
 const MONGODB_URI = process.env.MONGODB_URI || 'mongodb+srv://adika713:JedfwQ0wWkHdveNZ@kaszioldal.fuesawl.mongodb.net/?retryWrites=true&w=majority&appName=Kaszioldal';
-const FRONTEND_URL = process.env.FRONTEND_URL || 'https://falconkaszik-frontend.vercel.app/';
-const STREAMELEMENTS_JWT = process.env.STREAMELEMENTS_JWT || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJjaXRhZGVsIiwiZXhwIjoxNzY1NzI1MDUxLCJqdGkiOiIwNjFjNzA3YS1lMTZkLTRkY2YtOTk3Zi0zM2Y3NTdkYTA1MjMiLCJjaGFubmVsIjoiNjY1OGJmZmMzMTM3NDk1ZDMzYjBhM2Y3Iiwicm9sZSI6Im93bmVyIiwiYXV0aFRva2VuIjoiTk5Ca2hHeUFodmN6am5mM2lzQy1lUXVKREZnb2o1eWZRYkQwNGpacnZoWTgteTdBIiwidXNlciI6IjY2NThiZmZjMzEzNzQ5NWQzM2IwYTNmNiIsInVzZXJfaWQiOiIzNmJmNTdmYi1hODVhLTQyYzYtYjdiNS03MjViODViM2IyOGIiLCJ1c2VyX3JvbGUiOiJjcmVhdG9yIiwicHJvdmlkZXIiOiJ0d2l0Y2giLCJwcm92aWRlcl9iZCI6IjEwNDYyNzI3MzgiLCJjaGFubmVsX2lkIjoiODE4NDYwZmYtYzc1YS00YWU2LTg4ZDQtZTlkZmE4OGVhODUxIiwiY3JlYXRvcl9pZCI6ImFkM2E0MDM5LTcwNjUtNDcxNC1iNDNlLTJmYmYzYzM0MDdlNiJ9.cyXqMN1aQinzpEEOHKE3wAeC5jWlwXyD2s1ybXh73g8';
+const FRONTEND_URL = process.env.FRONTEND_URL || 'https://falconkaszik-frontend.vercel.app';
+const STREAMELEMENTS_JWT = process.env.STREAMELEMENTS_JWT || 'YOUR_NEW_STREAMELEMENTS_JWT';
 const STREAMELEMENTS_CHANNEL_ID = process.env.STREAMELEMENTS_CHANNEL_ID || '6658bffc3137495d33b0a3f7';
 const JWT_SECRET = process.env.JWT_SECRET || '3a85f866df8c9c084124b7eeb41b852a';
 
@@ -58,8 +63,10 @@ const Giveaway = mongoose.model('Giveaway', GiveawaySchema);
 // OAuth Callback Route
 app.get('/auth/twitch/callback', async (req, res) => {
     const { code, state } = req.query;
+    console.log('OAuth callback received:', { code: !!code, state });
 
     if (!code) {
+        console.error('No code provided in OAuth callback');
         return res.redirect(`${FRONTEND_URL}?error=no_code`);
     }
 
@@ -73,6 +80,7 @@ app.get('/auth/twitch/callback', async (req, res) => {
                 redirect_uri: REDIRECT_URI,
             },
         });
+        console.log('Twitch token response:', { access_token: !!tokenResponse.data.access_token });
 
         const { access_token } = tokenResponse.data;
 
@@ -82,6 +90,7 @@ app.get('/auth/twitch/callback', async (req, res) => {
                 'Authorization': `Bearer ${access_token}`,
             },
         });
+        console.log('Twitch user response:', { user_count: userResponse.data.data.length });
 
         const twitchUser = userResponse.data.data[0];
 
@@ -98,14 +107,18 @@ app.get('/auth/twitch/callback', async (req, res) => {
         );
 
         const dbUser = await User.findOne({ twitch_id: twitchUser.id });
+        console.log('User updated/created:', { twitch_id: dbUser.twitch_id });
 
         const token = jwt.sign(
             { twitch_id: dbUser.twitch_id },
             JWT_SECRET,
             { expiresIn: '24h' }
         );
+        console.log('JWT generated');
 
-        res.setHeader('Set-Cookie', `jwt_token=${token}; Path=/; HttpOnly; SameSite=Strict; Secure; Max-Age=86400`);
+        res.setHeader('Set-Cookie', `jwt_token=${token}; Path=/; HttpOnly; SameSite=Lax; Secure; Max-Age=86400`);
+        console.log('Cookie set: jwt_token');
+
         const userData = {
             id: dbUser.twitch_id,
             display_name: dbUser.display_name,
@@ -118,7 +131,11 @@ app.get('/auth/twitch/callback', async (req, res) => {
         const userDataQuery = encodeURIComponent(JSON.stringify(userData));
         res.redirect(`${FRONTEND_URL}?user=${userDataQuery}`);
     } catch (error) {
-        console.error('Error during Twitch OAuth:', error.message);
+        console.error('Error during Twitch OAuth:', {
+            message: error.message,
+            status: error.response?.status,
+            data: error.response?.data
+        });
         res.redirect(`${FRONTEND_URL}?error=auth_failed`);
     }
 });
@@ -126,15 +143,20 @@ app.get('/auth/twitch/callback', async (req, res) => {
 // Token Verification Route
 app.post('/auth/verify-token', async (req, res) => {
     const { jwt_token } = req.body;
+    console.log('Verify token request:', { jwt_token: !!jwt_token });
 
     if (!jwt_token) {
+        console.error('No token provided');
         return res.status(400).json({ error: 'No token provided' });
     }
 
     try {
         const decoded = jwt.verify(jwt_token, JWT_SECRET);
+        console.log('Token decoded:', { twitch_id: decoded.twitch_id });
+
         const user = await User.findOne({ twitch_id: decoded.twitch_id });
         if (!user) {
+            console.error('User not found for twitch_id:', decoded.twitch_id);
             return res.status(404).json({ error: 'User not found' });
         }
 
@@ -147,14 +169,18 @@ app.post('/auth/verify-token', async (req, res) => {
             giveaways_won: user.giveaways_won,
         });
     } catch (error) {
-        console.error('Error verifying token:', error.message);
-        res.status(401).json({ error: 'Invalid or expired token' });
+        console.error('Error verifying token:', {
+            message: error.message,
+            name: error.name
+        });
+        res.status(401).json({ error: 'Invalid or expired token', details: error.message });
     }
 });
 
 // Fetch User Points
 app.get('/api/points/:username', async (req, res) => {
     const { username } = req.params;
+    console.log('Fetching points for:', username);
 
     try {
         const response = await axios.get(`https://api.streamelements.com/kappa/v2/points/${STREAMELEMENTS_CHANNEL_ID}/${username.toLowerCase()}`, {
@@ -162,6 +188,7 @@ app.get('/api/points/:username', async (req, res) => {
                 'Authorization': `Bearer ${STREAMELEMENTS_JWT}`
             }
         });
+        console.log('StreamElements points response:', { username, points: response.data.points });
         res.json({ points: response.data.points });
     } catch (error) {
         console.error('Error fetching points:', {
@@ -176,8 +203,10 @@ app.get('/api/points/:username', async (req, res) => {
 // Deduct Points
 app.post('/api/points/deduct', async (req, res) => {
     const { username, amount } = req.body;
+    console.log('Deducting points:', { username, amount });
 
     if (!username || !amount || amount >= 0) {
+        console.error('Invalid deduct points request');
         return res.status(400).json({ error: 'Invalid username or amount' });
     }
 
@@ -191,6 +220,7 @@ app.post('/api/points/deduct', async (req, res) => {
                 }
             }
         );
+        console.log('Points deducted:', { username, points: response.data.points });
         res.json({ points: response.data.points });
     } catch (error) {
         console.error('Error deducting points:', {
@@ -205,12 +235,15 @@ app.post('/api/points/deduct', async (req, res) => {
 // Create Giveaway
 app.post('/api/giveaway/create', async (req, res) => {
     const { pointsRequired, jwt_token } = req.body;
+    console.log('Creating giveaway:', { pointsRequired });
 
     if (!pointsRequired || pointsRequired < 1) {
+        console.error('Invalid points required');
         return res.status(400).json({ error: 'Invalid points required' });
     }
 
     if (!jwt_token) {
+        console.error('No token provided');
         return res.status(400).json({ error: 'No token provided' });
     }
 
@@ -218,12 +251,14 @@ app.post('/api/giveaway/create', async (req, res) => {
         const decoded = jwt.verify(jwt_token, JWT_SECRET);
         const user = await User.findOne({ twitch_id: decoded.twitch_id });
         if (!user || user.login !== 'airfalconx') {
+            console.error('Unauthorized giveaway creation attempt');
             return res.status(403).json({ error: 'Unauthorized: Only airfalconx can create giveaways' });
         }
 
         await Giveaway.updateMany({ active: true }, { $set: { active: false } });
 
         const giveaway = await Giveaway.create({ pointsRequired });
+        console.log('Giveaway created:', giveaway._id);
         res.json({ message: 'Giveaway created successfully', giveaway });
     } catch (error) {
         console.error('Error creating giveaway:', error.message);
@@ -252,8 +287,10 @@ app.get('/api/giveaway/get', async (req, res) => {
 // Enter Giveaway
 app.post('/api/giveaway/enter', async (req, res) => {
     const { username, jwt_token } = req.body;
+    console.log('Entering giveaway for:', username);
 
     if (!username || !jwt_token) {
+        console.error('Invalid giveaway entry request');
         return res.status(400).json({ error: 'Invalid request' });
     }
 
@@ -261,15 +298,18 @@ app.post('/api/giveaway/enter', async (req, res) => {
         const decoded = jwt.verify(jwt_token, JWT_SECRET);
         const user = await User.findOne({ twitch_id: decoded.twitch_id });
         if (!user || user.login !== username.toLowerCase()) {
+            console.error('Unauthorized giveaway entry attempt');
             return res.status(403).json({ error: 'Unauthorized user' });
         }
 
         const giveaway = await Giveaway.findOne({ active: true });
         if (!giveaway) {
+            console.error('No active giveaway');
             return res.status(404).json({ error: 'No active giveaway' });
         }
 
         if (giveaway.participants.includes(username.toLowerCase())) {
+            console.error('User already entered giveaway');
             return res.status(400).json({ error: 'Already entered this giveaway' });
         }
 
@@ -279,8 +319,10 @@ app.post('/api/giveaway/enter', async (req, res) => {
             }
         });
         const currentPoints = pointsResponse.data.points;
+        console.log('Current points:', { username, points: currentPoints });
 
         if (currentPoints < giveaway.pointsRequired) {
+            console.error('Insufficient points');
             return res.status(400).json({ error: 'Insufficient points' });
         }
 
@@ -293,6 +335,7 @@ app.post('/api/giveaway/enter', async (req, res) => {
                 }
             }
         );
+        console.log('Points deducted for giveaway:', { username, points: deductResponse.data.points });
 
         await Giveaway.updateOne(
             { _id: giveaway._id },
@@ -313,19 +356,23 @@ app.post('/api/giveaway/enter', async (req, res) => {
 // Update Giveaway Attendance
 app.post('/api/giveaway/attend', async (req, res) => {
     const { twitch_id, jwt_token } = req.body;
+    console.log('Updating giveaway attendance:', { twitch_id });
 
     if (!twitch_id || !jwt_token) {
+        console.error('Invalid attendance request');
         return res.status(400).json({ error: 'Invalid request' });
     }
 
     try {
         const decoded = jwt.verify(jwt_token, JWT_SECRET);
         if (decoded.twitch_id !== twitch_id) {
+            console.error('Unauthorized attendance update');
             return res.status(403).json({ error: 'Unauthorized' });
         }
 
         const user = await User.findOne({ twitch_id });
         if (!user) {
+            console.error('User not found');
             return res.status(404).json({ error: 'User not found' });
         }
 
@@ -349,19 +396,23 @@ app.post('/api/giveaway/attend', async (req, res) => {
 // Update Giveaway Wins
 app.post('/api/giveaway/win', async (req, res) => {
     const { twitch_id, jwt_token } = req.body;
+    console.log('Updating giveaway win:', { twitch_id });
 
     if (!twitch_id || !jwt_token) {
+        console.error('Invalid win request');
         return res.status(400).json({ error: 'Invalid request' });
     }
 
     try {
         const decoded = jwt.verify(jwt_token, JWT_SECRET);
         if (decoded.twitch_id !== twitch_id) {
+            console.error('Unauthorized win update');
             return res.status(403).json({ error: 'Unauthorized' });
         }
 
         const user = await User.findOne({ twitch_id });
         if (!user) {
+            console.error('User not found');
             return res.status(404).json({ error: 'User not found' });
         }
 
