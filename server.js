@@ -63,10 +63,10 @@ const Giveaway = mongoose.model('Giveaway', GiveawaySchema);
 // OAuth Callback Route
 app.get('/auth/twitch/callback', async (req, res) => {
     const { code, state } = req.query;
-    console.log('OAuth callback received:', { code: !!code, state });
+    console.log('OAuth callback:', { code: !!code, state });
 
     if (!code) {
-        console.error('No code provided in OAuth callback');
+        console.error('No code provided');
         return res.redirect(`${FRONTEND_URL}?error=no_code`);
     }
 
@@ -90,7 +90,7 @@ app.get('/auth/twitch/callback', async (req, res) => {
                 'Authorization': `Bearer ${access_token}`,
             },
         });
-        console.log('Twitch user response:', { user_count: userResponse.data.data.length });
+        console.log('Twitch user response:', { user: userResponse.data.data[0]?.login });
 
         const twitchUser = userResponse.data.data[0];
 
@@ -107,14 +107,14 @@ app.get('/auth/twitch/callback', async (req, res) => {
         );
 
         const dbUser = await User.findOne({ twitch_id: twitchUser.id });
-        console.log('User updated/created:', { twitch_id: dbUser.twitch_id });
+        console.log('User saved:', { twitch_id: dbUser.twitch_id, login: dbUser.login });
 
         const token = jwt.sign(
             { twitch_id: dbUser.twitch_id },
             JWT_SECRET,
             { expiresIn: '24h' }
         );
-        console.log('JWT generated');
+        console.log('JWT generated for:', dbUser.login);
 
         res.setHeader('Set-Cookie', `jwt_token=${token}; Path=/; HttpOnly; SameSite=Lax; Secure; Max-Age=86400`);
         console.log('Cookie set: jwt_token');
@@ -129,9 +129,10 @@ app.get('/auth/twitch/callback', async (req, res) => {
         };
 
         const userDataQuery = encodeURIComponent(JSON.stringify(userData));
+        console.log('Redirecting to frontend with user data');
         res.redirect(`${FRONTEND_URL}?user=${userDataQuery}`);
     } catch (error) {
-        console.error('Error during Twitch OAuth:', {
+        console.error('OAuth error:', {
             message: error.message,
             status: error.response?.status,
             data: error.response?.data
@@ -143,7 +144,7 @@ app.get('/auth/twitch/callback', async (req, res) => {
 // Token Verification Route
 app.post('/auth/verify-token', async (req, res) => {
     const { jwt_token } = req.body;
-    console.log('Verify token request:', { jwt_token: !!jwt_token });
+    console.log('Verify token:', { token_provided: !!jwt_token });
 
     if (!jwt_token) {
         console.error('No token provided');
@@ -156,7 +157,7 @@ app.post('/auth/verify-token', async (req, res) => {
 
         const user = await User.findOne({ twitch_id: decoded.twitch_id });
         if (!user) {
-            console.error('User not found for twitch_id:', decoded.twitch_id);
+            console.error('User not found:', decoded.twitch_id);
             return res.status(404).json({ error: 'User not found' });
         }
 
@@ -169,7 +170,7 @@ app.post('/auth/verify-token', async (req, res) => {
             giveaways_won: user.giveaways_won,
         });
     } catch (error) {
-        console.error('Error verifying token:', {
+        console.error('Token verification error:', {
             message: error.message,
             name: error.name
         });
@@ -180,50 +181,61 @@ app.post('/auth/verify-token', async (req, res) => {
 // Fetch User Points
 app.get('/api/points/:username', async (req, res) => {
     const { username } = req.params;
-    console.log('Fetching points for:', username);
+    const lowerUsername = username.toLowerCase();
+    console.log('Fetching points:', { username: lowerUsername });
 
     try {
-        const response = await axios.get(`https://api.streamelements.com/kappa/v2/points/${STREAMELEMENTS_CHANNEL_ID}/${username.toLowerCase()}`, {
+        const response = await axios.get(`https://api.streamelements.com/kappa/v2/points/${STREAMELEMENTS_CHANNEL_ID}/${lowerUsername}`, {
             headers: {
-                'Authorization': `Bearer ${STREAMELEMENTS_JWT}`
-            }
+                'Authorization': `Bearer ${STREAMELEMENTS_JWT}`,
+                'Accept': 'application/json'
+            },
+            timeout: 5000
         });
-        console.log('StreamElements points response:', { username, points: response.data.points });
+        console.log('StreamElements response:', {
+            username: lowerUsername,
+            points: response.data.points,
+            status: response.status
+        });
         res.json({ points: response.data.points });
     } catch (error) {
-        console.error('Error fetching points:', {
+        console.error('Points fetch error:', {
             message: error.message,
             status: error.response?.status,
-            data: error.response?.data
+            data: error.response?.data,
+            url: `https://api.streamelements.com/kappa/v2/points/${STREAMELEMENTS_CHANNEL_ID}/${lowerUsername}`
         });
-        res.status(500).json({ error: 'Failed to fetch points', details: error.message });
+        res.status(500).json({ error: 'Failed to fetch points', details: error.message, status: error.response?.status });
     }
 });
 
 // Deduct Points
 app.post('/api/points/deduct', async (req, res) => {
     const { username, amount } = req.body;
-    console.log('Deducting points:', { username, amount });
+    const lowerUsername = username.toLowerCase();
+    console.log('Deducting points:', { username: lowerUsername, amount });
 
     if (!username || !amount || amount >= 0) {
-        console.error('Invalid deduct points request');
+        console.error('Invalid deduct request');
         return res.status(400).json({ error: 'Invalid username or amount' });
     }
 
     try {
         const response = await axios.put(
-            `https://api.streamelements.com/kappa/v2/points/${STREAMELEMENTS_CHANNEL_ID}/${username.toLowerCase()}/${amount}`,
+            `https://api.streamelements.com/kappa/v2/points/${STREAMELEMENTS_CHANNEL_ID}/${lowerUsername}/${amount}`,
             {},
             {
                 headers: {
-                    'Authorization': `Bearer ${STREAMELEMENTS_JWT}`
-                }
+                    'Authorization': `Bearer ${STREAMELEMENTS_JWT}`,
+                    'Accept': 'application/json'
+                },
+                timeout: 5000
             }
         );
-        console.log('Points deducted:', { username, points: response.data.points });
+        console.log('Points deducted:', { username: lowerUsername, points: response.data.points });
         res.json({ points: response.data.points });
     } catch (error) {
-        console.error('Error deducting points:', {
+        console.error('Points deduct error:', {
             message: error.message,
             status: error.response?.status,
             data: error.response?.data
@@ -251,17 +263,17 @@ app.post('/api/giveaway/create', async (req, res) => {
         const decoded = jwt.verify(jwt_token, JWT_SECRET);
         const user = await User.findOne({ twitch_id: decoded.twitch_id });
         if (!user || user.login !== 'airfalconx') {
-            console.error('Unauthorized giveaway creation attempt');
+            console.error('Unauthorized giveaway creation');
             return res.status(403).json({ error: 'Unauthorized: Only airfalconx can create giveaways' });
         }
 
         await Giveaway.updateMany({ active: true }, { $set: { active: false } });
 
         const giveaway = await Giveaway.create({ pointsRequired });
-        console.log('Giveaway created:', giveaway._id);
+        console.log('Giveaway created:', { id: giveaway._id });
         res.json({ message: 'Giveaway created successfully', giveaway });
     } catch (error) {
-        console.error('Error creating giveaway:', error.message);
+        console.error('Giveaway creation error:', error.message);
         res.status(500).json({ error: 'Failed to create giveaway' });
     }
 });
@@ -279,7 +291,7 @@ app.get('/api/giveaway/get', async (req, res) => {
             participants: giveaway.participants
         });
     } catch (error) {
-        console.error('Error fetching giveaway:', error.message);
+        console.error('Giveaway fetch error:', error.message);
         res.status(500).json({ error: 'Failed to fetch giveaway' });
     }
 });
@@ -287,18 +299,19 @@ app.get('/api/giveaway/get', async (req, res) => {
 // Enter Giveaway
 app.post('/api/giveaway/enter', async (req, res) => {
     const { username, jwt_token } = req.body;
-    console.log('Entering giveaway for:', username);
+    const lowerUsername = username.toLowerCase();
+    console.log('Entering giveaway:', { username: lowerUsername });
 
     if (!username || !jwt_token) {
-        console.error('Invalid giveaway entry request');
+        console.error('Invalid giveaway entry');
         return res.status(400).json({ error: 'Invalid request' });
     }
 
     try {
         const decoded = jwt.verify(jwt_token, JWT_SECRET);
         const user = await User.findOne({ twitch_id: decoded.twitch_id });
-        if (!user || user.login !== username.toLowerCase()) {
-            console.error('Unauthorized giveaway entry attempt');
+        if (!user || user.login !== lowerUsername) {
+            console.error('Unauthorized giveaway entry');
             return res.status(403).json({ error: 'Unauthorized user' });
         }
 
@@ -308,18 +321,20 @@ app.post('/api/giveaway/enter', async (req, res) => {
             return res.status(404).json({ error: 'No active giveaway' });
         }
 
-        if (giveaway.participants.includes(username.toLowerCase())) {
-            console.error('User already entered giveaway');
+        if (giveaway.participants.includes(lowerUsername)) {
+            console.error('Already entered');
             return res.status(400).json({ error: 'Already entered this giveaway' });
         }
 
-        const pointsResponse = await axios.get(`https://api.streamelements.com/kappa/v2/points/${STREAMELEMENTS_CHANNEL_ID}/${username.toLowerCase()}`, {
+        const pointsResponse = await axios.get(`https://api.streamelements.com/kappa/v2/points/${STREAMELEMENTS_CHANNEL_ID}/${lowerUsername}`, {
             headers: {
-                'Authorization': `Bearer ${STREAMELEMENTS_JWT}`
-            }
+                'Authorization': `Bearer ${STREAMELEMENTS_JWT}`,
+                'Accept': 'application/json'
+            },
+            timeout: 5000
         });
         const currentPoints = pointsResponse.data.points;
-        console.log('Current points:', { username, points: currentPoints });
+        console.log('Current points:', { username: lowerUsername, points: currentPoints });
 
         if (currentPoints < giveaway.pointsRequired) {
             console.error('Insufficient points');
@@ -327,36 +342,38 @@ app.post('/api/giveaway/enter', async (req, res) => {
         }
 
         const deductResponse = await axios.put(
-            `https://api.streamelements.com/kappa/v2/points/${STREAMELEMENTS_CHANNEL_ID}/${username.toLowerCase()}/${-giveaway.pointsRequired}`,
+            `https://api.streamelements.com/kappa/v2/points/${STREAMELEMENTS_CHANNEL_ID}/${lowerUsername}/${-giveaway.pointsRequired}`,
             {},
             {
                 headers: {
-                    'Authorization': `Bearer ${STREAMELEMENTS_JWT}`
-                }
+                    'Authorization': `Bearer ${STREAMELEMENTS_JWT}`,
+                    'Accept': 'application/json'
+                },
+                timeout: 5000
             }
         );
-        console.log('Points deducted for giveaway:', { username, points: deductResponse.data.points });
+        console.log('Points deducted:', { username: lowerUsername, points: deductResponse.data.points });
 
         await Giveaway.updateOne(
             { _id: giveaway._id },
-            { $push: { participants: username.toLowerCase() } }
+            { $push: { participants: lowerUsername } }
         );
 
         res.json({ message: 'Entered giveaway successfully', points: deductResponse.data.points });
     } catch (error) {
-        console.error('Error entering giveaway:', {
+        console.error('Giveaway entry error:', {
             message: error.message,
             status: error.response?.status,
             data: error.response?.data
         });
-        res.status(500).json({ error: error.message || 'Failed to enter giveaway' });
+        res.status(500).json({ error: 'Failed to enter giveaway', details: error.message });
     }
 });
 
 // Update Giveaway Attendance
 app.post('/api/giveaway/attend', async (req, res) => {
     const { twitch_id, jwt_token } = req.body;
-    console.log('Updating giveaway attendance:', { twitch_id });
+    console.log('Updating attendance:', { twitch_id });
 
     if (!twitch_id || !jwt_token) {
         console.error('Invalid attendance request');
@@ -388,7 +405,7 @@ app.post('/api/giveaway/attend', async (req, res) => {
             giveaways_won: updatedUser.giveaways_won,
         });
     } catch (error) {
-        console.error('Error updating giveaway attendance:', error.message);
+        console.error('Attendance update error:', error.message);
         res.status(500).json({ error: 'Failed to update giveaway data' });
     }
 });
@@ -396,7 +413,7 @@ app.post('/api/giveaway/attend', async (req, res) => {
 // Update Giveaway Wins
 app.post('/api/giveaway/win', async (req, res) => {
     const { twitch_id, jwt_token } = req.body;
-    console.log('Updating giveaway win:', { twitch_id });
+    console.log('Updating win:', { twitch_id });
 
     if (!twitch_id || !jwt_token) {
         console.error('Invalid win request');
@@ -428,7 +445,7 @@ app.post('/api/giveaway/win', async (req, res) => {
             giveaways_won: updatedUser.giveaways_won,
         });
     } catch (error) {
-        console.error('Error updating giveaway win:', error.message);
+        console.error('Win update error:', error.message);
         res.status(500).json({ error: 'Failed to update giveaway data' });
     }
 });
