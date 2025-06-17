@@ -3,7 +3,7 @@ const express = require('express');
 const axios = require('axios');
 const mongoose = require('mongoose');
 const cors = require('cors');
-const crypto = require('crypto');
+const jwt = require('jsonwebtoken');
 
 const app = express();
 
@@ -17,8 +17,9 @@ const CLIENT_SECRET = process.env.TWITCH_CLIENT_SECRET || '4uisld97aaj8rvuf268kb
 const REDIRECT_URI = process.env.REDIRECT_URI || 'https://falconkaszik-backend.onrender.com/auth/twitch/callback';
 const MONGODB_URI = process.env.MONGODB_URI || 'mongodb+srv://adika713:JedfwQ0wWkHdveNZ@kaszioldal.fuesawl.mongodb.net/?retryWrites=true&w=majority&appName=Kaszioldal';
 const FRONTEND_URL = process.env.FRONTEND_URL || 'https://falconkaszik-frontend.vercel.app/';
-const STREAMELEMENTS_JWT = process.env.STREAMELEMENTS_JWT || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJjaXRhZGVsIiwiZXhwIjoxNzY1NzI1MDUxLCJqdGkiOiIwNjFjNzA3YS1lMTZkLTRkY2YtOTk3Zi0zM2Y3NTdkYTA1MjMiLCJjaGFubmVsIjoiNjY1OGJmZmMzMTM3NDk1ZDMzYjBhM2Y3Iiwicm9sZSI6Im93bmVyIiwiYXV0aFRva2VuIjoiTk5Ca2hHeUFodmN6am5mM2lzQy1lUXVKREZnb2o1eWZRYkQwNGpacnZoWTgteTdBIiwidXNlciI6IjY2NThiZmZjMzEzNzQ5NWQzM2IwYTNmNiIsInVzZXJfaWQiOiIzNmJmNTdmYi1hODVhLTQyYzYtYjdiNS03MjViODViM2IyOGIiLCJ1c2VyX3JvbGUiOiJjcmVhdG9yIiwicHJvdmlkZXIiOiJ0d2l0Y2giLCJwcm92aWRlcl9pZCI6IjEwNDYyNzI3MzgiLCJjaGFubmVsX2lkIjoiODE4NDYwZmYtYzc1YS00YWU2LTg4ZDQtZTlkZmE4OGVhODUxIiwiY3JlYXRvcl9pZCI6ImFkM2E0MDM5LTcwNjUtNDcxNC1iNDNlLTJmYmYzYzM0MDdlNiJ9.cyXqMN1aQinzpEEOHKE3wAeC5jWlwXyD2s1ybXh73g8';
+const STREAMELEMENTS_JWT = process.env.STREAMELEMENTS_JWT || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJjaXRhZGVsIiwiZXhwIjoxNzY1NzI1MDUxLCJqdGkiOiIwNjFjNzA3YS1lMTZkLTRkY2YtOTk3Zi0zM2Y3NTdkYTA1MjMiLCJjaGFubmVsIjoiNjY1OGJmZmMzMTM3NDk1ZDMzYjBhM2Y3Iiwicm9sZSI6Im93bmVyIiwiYXV0aFRva2VuIjoiTk5Ca2hHeUFodmN6am5mM2lzQy1lUXVKREZnb2o1eWZRYkQwNGpacnZoWTgteTdBIiwidXNlciI6IjY2NThiZmZjMzEzNzQ5NWQzM2IwYTNmNiIsInVzZXJfaWQiOiIzNmJmNTdmYi1hODVhLTQyYzYtYjdiNS03MjViODViM2IyOGIiLCJ1c2VyX3JvbGUiOiJjcmVhdG9yIiwicHJvdmlkZXIiOiJ0d2l0Y2giLCJwcm92aWRlcl9iZCI6IjEwNDYyNzI3MzgiLCJjaGFubmVsX2lkIjoiODE4NDYwZmYtYzc1YS00YWU2LTg4ZDQtZTlkZmE4OGVhODUxIiwiY3JlYXRvcl9pZCI6ImFkM2E0MDM5LTcwNjUtNDcxNC1iNDNlLTJmYmYzYzM0MDdlNiJ9.cyXqMN1aQinzpEEOHKE3wAeC5jWlwXyD2s1ybXh73g8';
 const STREAMELEMENTS_CHANNEL_ID = process.env.STREAMELEMENTS_CHANNEL_ID || '6658bffc3137495d33b0a3f7';
+const JWT_SECRET = process.env.JWT_SECRET || '3a85f866df8c9c084124b7eeb41b852a';
 
 // Connect to MongoDB with retry
 async function connectMongoDB() {
@@ -43,15 +44,6 @@ const UserSchema = new mongoose.Schema({
 });
 
 const User = mongoose.model('User', UserSchema);
-
-// Session Schema
-const SessionSchema = new mongoose.Schema({
-    session_token: { type: String, required: true, unique: true },
-    twitch_id: { type: String, required: true },
-    created_at: { type: Date, default: Date.now, expires: '24h' },
-});
-
-const Session = mongoose.model('Session', SessionSchema);
 
 // Giveaway Schema
 const GiveawaySchema = new mongoose.Schema({
@@ -98,7 +90,7 @@ app.get('/auth/twitch/callback', async (req, res) => {
             {
                 $set: {
                     display_name: twitchUser.display_name,
-                    login: twitchUser.login,
+                    login: twitchUser.login.toLowerCase(),
                     profile_image_url: twitchUser.profile_image_url,
                 },
             },
@@ -107,12 +99,13 @@ app.get('/auth/twitch/callback', async (req, res) => {
 
         const dbUser = await User.findOne({ twitch_id: twitchUser.id });
 
-        const sessionToken = crypto.randomBytes(32).toString('hex');
-        await Session.create({
-            session_token: sessionToken,
-            twitch_id: twitchUser.id,
-        });
+        const token = jwt.sign(
+            { twitch_id: dbUser.twitch_id },
+            JWT_SECRET,
+            { expiresIn: '24h' }
+        );
 
+        res.setHeader('Set-Cookie', `jwt_token=${token}; Path=/; HttpOnly; SameSite=Strict; Secure; Max-Age=86400`);
         const userData = {
             id: dbUser.twitch_id,
             display_name: dbUser.display_name,
@@ -122,7 +115,6 @@ app.get('/auth/twitch/callback', async (req, res) => {
             giveaways_won: dbUser.giveaways_won,
         };
 
-        res.setHeader('Set-Cookie', `session_token=${sessionToken}; Path=/; HttpOnly; SameSite=Strict; Secure`);
         const userDataQuery = encodeURIComponent(JSON.stringify(userData));
         res.redirect(`${FRONTEND_URL}?user=${userDataQuery}`);
     } catch (error) {
@@ -131,21 +123,17 @@ app.get('/auth/twitch/callback', async (req, res) => {
     }
 });
 
-// Session Verification Route
-app.post('/auth/verify-session', async (req, res) => {
-    const { session_token } = req.body;
+// Token Verification Route
+app.post('/auth/verify-token', async (req, res) => {
+    const { jwt_token } = req.body;
 
-    if (!session_token) {
-        return res.status(400).json({ error: 'No session token provided' });
+    if (!jwt_token) {
+        return res.status(400).json({ error: 'No token provided' });
     }
 
     try {
-        const session = await Session.findOne({ session_token });
-        if (!session) {
-            return res.status(401).json({ error: 'Invalid or expired session' });
-        }
-
-        const user = await User.findOne({ twitch_id: session.twitch_id });
+        const decoded = jwt.verify(jwt_token, JWT_SECRET);
+        const user = await User.findOne({ twitch_id: decoded.twitch_id });
         if (!user) {
             return res.status(404).json({ error: 'User not found' });
         }
@@ -159,28 +147,8 @@ app.post('/auth/verify-session', async (req, res) => {
             giveaways_won: user.giveaways_won,
         });
     } catch (error) {
-        console.error('Error verifying session:', error.message);
-        res.status(500).json({ error: 'Server error' });
-    }
-});
-
-// Logout Route
-app.post('/api/logout', async (req, res) => {
-    const { session_token } = req.body;
-
-    if (!session_token) {
-        return res.status(400).json({ error: 'No session token provided' });
-    }
-
-    try {
-        const deleted = await Session.deleteOne({ session_token });
-        if (deleted.deletedCount === 0) {
-            return res.status(404).json({ error: 'Session not found' });
-        }
-        res.json({ message: 'Logged out successfully' });
-    } catch (error) {
-        console.error('Error during logout:', error.message);
-        res.status(500).json({ error: 'Server error' });
+        console.error('Error verifying token:', error.message);
+        res.status(401).json({ error: 'Invalid or expired token' });
     }
 });
 
@@ -189,15 +157,19 @@ app.get('/api/points/:username', async (req, res) => {
     const { username } = req.params;
 
     try {
-        const response = await axios.get(`https://api.streamelements.com/kappa/v2/points/${STREAMELEMENTS_CHANNEL_ID}/${username}`, {
+        const response = await axios.get(`https://api.streamelements.com/kappa/v2/points/${STREAMELEMENTS_CHANNEL_ID}/${username.toLowerCase()}`, {
             headers: {
                 'Authorization': `Bearer ${STREAMELEMENTS_JWT}`
             }
         });
         res.json({ points: response.data.points });
     } catch (error) {
-        console.error('Error fetching points:', error.message);
-        res.status(500).json({ error: 'Failed to fetch points' });
+        console.error('Error fetching points:', {
+            message: error.message,
+            status: error.response?.status,
+            data: error.response?.data
+        });
+        res.status(500).json({ error: 'Failed to fetch points', details: error.message });
     }
 });
 
@@ -211,7 +183,7 @@ app.post('/api/points/deduct', async (req, res) => {
 
     try {
         const response = await axios.put(
-            `https://api.streamelements.com/kappa/v2/points/${STREAMELEMENTS_CHANNEL_ID}/${username}/${amount}`,
+            `https://api.streamelements.com/kappa/v2/points/${STREAMELEMENTS_CHANNEL_ID}/${username.toLowerCase()}/${amount}`,
             {},
             {
                 headers: {
@@ -221,30 +193,30 @@ app.post('/api/points/deduct', async (req, res) => {
         );
         res.json({ points: response.data.points });
     } catch (error) {
-        console.error('Error deducting points:', error.message);
-        res.status(500).json({ error: 'Failed to deduct points' });
+        console.error('Error deducting points:', {
+            message: error.message,
+            status: error.response?.status,
+            data: error.response?.data
+        });
+        res.status(500).json({ error: 'Failed to deduct points', details: error.message });
     }
 });
 
 // Create Giveaway
 app.post('/api/giveaway/create', async (req, res) => {
-    const { pointsRequired, session_token } = req.body;
+    const { pointsRequired, jwt_token } = req.body;
 
     if (!pointsRequired || pointsRequired < 1) {
         return res.status(400).json({ error: 'Invalid points required' });
     }
 
-    if (!session_token) {
-        return res.status(400).json({ error: 'No session token provided' });
+    if (!jwt_token) {
+        return res.status(400).json({ error: 'No token provided' });
     }
 
     try {
-        const session = await Session.findOne({ session_token });
-        if (!session) {
-            return res.status(401).json({ error: 'Invalid or expired session' });
-        }
-
-        const user = await User.findOne({ twitch_id: session.twitch_id });
+        const decoded = jwt.verify(jwt_token, JWT_SECRET);
+        const user = await User.findOne({ twitch_id: decoded.twitch_id });
         if (!user || user.login !== 'airfalconx') {
             return res.status(403).json({ error: 'Unauthorized: Only airfalconx can create giveaways' });
         }
@@ -279,20 +251,16 @@ app.get('/api/giveaway/get', async (req, res) => {
 
 // Enter Giveaway
 app.post('/api/giveaway/enter', async (req, res) => {
-    const { username, session_token } = req.body;
+    const { username, jwt_token } = req.body;
 
-    if (!username || !session_token) {
+    if (!username || !jwt_token) {
         return res.status(400).json({ error: 'Invalid request' });
     }
 
     try {
-        const session = await Session.findOne({ session_token });
-        if (!session) {
-            return res.status(401).json({ error: 'Invalid or expired session' });
-        }
-
-        const user = await User.findOne({ twitch_id: session.twitch_id });
-        if (!user || user.login !== username) {
+        const decoded = jwt.verify(jwt_token, JWT_SECRET);
+        const user = await User.findOne({ twitch_id: decoded.twitch_id });
+        if (!user || user.login !== username.toLowerCase()) {
             return res.status(403).json({ error: 'Unauthorized user' });
         }
 
@@ -301,11 +269,11 @@ app.post('/api/giveaway/enter', async (req, res) => {
             return res.status(404).json({ error: 'No active giveaway' });
         }
 
-        if (giveaway.participants.includes(username)) {
+        if (giveaway.participants.includes(username.toLowerCase())) {
             return res.status(400).json({ error: 'Already entered this giveaway' });
         }
 
-        const pointsResponse = await axios.get(`https://api.streamelements.com/kappa/v2/points/${STREAMELEMENTS_CHANNEL_ID}/${username}`, {
+        const pointsResponse = await axios.get(`https://api.streamelements.com/kappa/v2/points/${STREAMELEMENTS_CHANNEL_ID}/${username.toLowerCase()}`, {
             headers: {
                 'Authorization': `Bearer ${STREAMELEMENTS_JWT}`
             }
@@ -317,7 +285,7 @@ app.post('/api/giveaway/enter', async (req, res) => {
         }
 
         const deductResponse = await axios.put(
-            `https://api.streamelements.com/kappa/v2/points/${STREAMELEMENTS_CHANNEL_ID}/${username}/${-giveaway.pointsRequired}`,
+            `https://api.streamelements.com/kappa/v2/points/${STREAMELEMENTS_CHANNEL_ID}/${username.toLowerCase()}/${-giveaway.pointsRequired}`,
             {},
             {
                 headers: {
@@ -328,25 +296,34 @@ app.post('/api/giveaway/enter', async (req, res) => {
 
         await Giveaway.updateOne(
             { _id: giveaway._id },
-            { $push: { participants: username } }
+            { $push: { participants: username.toLowerCase() } }
         );
 
         res.json({ message: 'Entered giveaway successfully', points: deductResponse.data.points });
     } catch (error) {
-        console.error('Error entering giveaway:', error.message);
+        console.error('Error entering giveaway:', {
+            message: error.message,
+            status: error.response?.status,
+            data: error.response?.data
+        });
         res.status(500).json({ error: error.message || 'Failed to enter giveaway' });
     }
 });
 
 // Update Giveaway Attendance
 app.post('/api/giveaway/attend', async (req, res) => {
-    const { twitch_id } = req.body;
+    const { twitch_id, jwt_token } = req.body;
 
-    if (!twitch_id) {
-        return res.status(400).json({ error: 'No twitch_id provided' });
+    if (!twitch_id || !jwt_token) {
+        return res.status(400).json({ error: 'Invalid request' });
     }
 
     try {
+        const decoded = jwt.verify(jwt_token, JWT_SECRET);
+        if (decoded.twitch_id !== twitch_id) {
+            return res.status(403).json({ error: 'Unauthorized' });
+        }
+
         const user = await User.findOne({ twitch_id });
         if (!user) {
             return res.status(404).json({ error: 'User not found' });
@@ -371,13 +348,18 @@ app.post('/api/giveaway/attend', async (req, res) => {
 
 // Update Giveaway Wins
 app.post('/api/giveaway/win', async (req, res) => {
-    const { twitch_id } = req.body;
+    const { twitch_id, jwt_token } = req.body;
 
-    if (!twitch_id) {
-        return res.status(400).json({ error: 'No twitch_id provided' });
+    if (!twitch_id || !jwt_token) {
+        return res.status(400).json({ error: 'Invalid request' });
     }
 
     try {
+        const decoded = jwt.verify(jwt_token, JWT_SECRET);
+        if (decoded.twitch_id !== twitch_id) {
+            return res.status(403).json({ error: 'Unauthorized' });
+        }
+
         const user = await User.findOne({ twitch_id });
         if (!user) {
             return res.status(404).json({ error: 'User not found' });
