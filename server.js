@@ -1,3 +1,4 @@
+require('dotenv').config();
 const express = require('express');
 const axios = require('axios');
 const mongoose = require('mongoose');
@@ -7,17 +8,17 @@ const crypto = require('crypto');
 const app = express();
 
 // Middleware
-app.use(cors({ origin: 'http://127.0.0.1:5500', credentials: true }));
+app.use(cors({ origin: process.env.FRONTEND_URL, credentials: true }));
 app.use(express.json());
 
 // Environment variables
 const CLIENT_ID = process.env.TWITCH_CLIENT_ID || 'z2n5k9lu6ja19cq64d1n1pekwr8pcj';
 const CLIENT_SECRET = process.env.TWITCH_CLIENT_SECRET || '4uisld97aaj8rvuf268kbd2c4wugtz';
-const REDIRECT_URI = process.env.REDIRECT_URI || 'http://localhost:3000/auth/twitch/callback';
+const REDIRECT_URI = process.env.REDIRECT_URI || 'https://falconkaszik-backend.onrender.com/auth/twitch/callback';
 const MONGODB_URI = process.env.MONGODB_URI || 'mongodb+srv://adika713:JedfwQ0wWkHdveNZ@kaszioldal.fuesawl.mongodb.net/?retryWrites=true&w=majority&appName=Kaszioldal';
-const FRONTEND_URL = process.env.FRONTEND_URL || 'http://127.0.0.1:5500/frontend/index.html';
-const STREAMELEMENTS_JWT = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJjaXRhZGVsIiwiZXhwIjoxNzY1NzI1MDUxLCJqdGkiOiIwNjFjNzA3YS1lMTZkLTRkY2YtOTk3Zi0zM2Y3NTdkYTA1MjMiLCJjaGFubmVsIjoiNjY1OGJmZmMzMTM3NDk1ZDMzYjBhM2Y3Iiwicm9sZSI6Im93bmVyIiwiYXV0aFRva2VuIjoiTk5Ca2hHeUFodmN6am5mM2lzQy1lUXVKREZnb2o1eWZRYkQwNGpacnZoWTgteTdBIiwidXNlciI6IjY2NThiZmZjMzEzNzQ5NWQzM2IwYTNmNiIsInVzZXJfaWQiOiIzNmJmNTdmYi1hODVhLTQyYzYtYjdiNS03MjViODViM2IyOGIiLCJ1c2VyX3JvbGUiOiJjcmVhdG9yIiwicHJvdmlkZXIiOiJ0d2l0Y2giLCJwcm92aWRlcl9pZCI6IjEwNDYyNzI3MzgiLCJjaGFubmVsX2lkIjoiODE4NDYwZmYtYzc1YS00YWU2LTg4ZDQtZTlkZmE4OGVhODUxIiwiY3JlYXRvcl9pZCI6ImFkM2E0MDM5LTcwNjUtNDcxNC1iNDNlLTJmYmYzYzM0MDdlNiJ9.cyXqMN1aQinzpEEOHKE3wAeC5jWlwXyD2s1ybXh73g8';
-const STREAMELEMENTS_CHANNEL_ID = '6658bffc3137495d33b0a3f7';
+const FRONTEND_URL = process.env.FRONTEND_URL || 'https://falconkaszik-frontend.vercel.app/';
+const STREAMELEMENTS_JWT = process.env.STREAMELEMENTS_JWT || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJjaXRhZGVsIiwiZXhwIjoxNzY1NzI1MDUxLCJqdGkiOiIwNjFjNzA3YS1lMTZkLTRkY2YtOTk3Zi0zM2Y3NTdkYTA1MjMiLCJjaGFubmVsIjoiNjY1OGJmZmMzMTM3NDk1ZDMzYjBhM2Y3Iiwicm9sZSI6Im93bmVyIiwiYXV0aFRva2VuIjoiTk5Ca2hHeUFodmN6am5mM2lzQy1lUXVKREZnb2o1eWZRYkQwNGpacnZoWTgteTdBIiwidXNlciI6IjY2NThiZmZjMzEzNzQ5NWQzM2IwYTNmNiIsInVzZXJfaWQiOiIzNmJmNTdmYi1hODVhLTQyYzYtYjdiNS03MjViODViM2IyOGIiLCJ1c2VyX3JvbGUiOiJjcmVhdG9yIiwicHJvdmlkZXIiOiJ0d2l0Y2giLCJwcm92aWRlcl9pZCI6IjEwNDYyNzI3MzgiLCJjaGFubmVsX2lkIjoiODE4NDYwZmYtYzc1YS00YWU2LTg4ZDQtZTlkZmE4OGVhODUxIiwiY3JlYXRvcl9pZCI6ImFkM2E0MDM5LTcwNjUtNDcxNC1iNDNlLTJmYmYzYzM0MDdlNiJ9.cyXqMN1aQinzpEEOHKE3wAeC5jWlwXyD2s1ybXh73g8';
+const STREAMELEMENTS_CHANNEL_ID = process.env.STREAMELEMENTS_CHANNEL_ID || '6658bffc3137495d33b0a3f7';
 
 // Connect to MongoDB with retry
 async function connectMongoDB() {
@@ -57,7 +58,7 @@ const GiveawaySchema = new mongoose.Schema({
     pointsRequired: { type: Number, required: true },
     active: { type: Boolean, default: true },
     createdAt: { type: Date, default: Date.now },
-    participants: [{ type: String }], // Store twitch login of participants
+    participants: [{ type: String }],
 });
 
 const Giveaway = mongoose.model('Giveaway', GiveawaySchema);
@@ -121,7 +122,7 @@ app.get('/auth/twitch/callback', async (req, res) => {
             giveaways_won: dbUser.giveaways_won,
         };
 
-        res.setHeader('Set-Cookie', `session_token=${sessionToken}; Path=/; HttpOnly; SameSite=Strict`);
+        res.setHeader('Set-Cookie', `session_token=${sessionToken}; Path=/; HttpOnly; SameSite=Strict; Secure`);
         const userDataQuery = encodeURIComponent(JSON.stringify(userData));
         res.redirect(`${FRONTEND_URL}?user=${userDataQuery}`);
     } catch (error) {
@@ -227,19 +228,18 @@ app.post('/api/points/deduct', async (req, res) => {
 
 // Create Giveaway
 app.post('/api/giveaway/create', async (req, res) => {
-    const { pointsRequired } = req.body;
-    const sessionToken = req.body.session_token;
+    const { pointsRequired, session_token } = req.body;
 
     if (!pointsRequired || pointsRequired < 1) {
         return res.status(400).json({ error: 'Invalid points required' });
     }
 
-    if (!sessionToken) {
+    if (!session_token) {
         return res.status(400).json({ error: 'No session token provided' });
     }
 
     try {
-        const session = await Session.findOne({ session_token: sessionToken });
+        const session = await Session.findOne({ session_token });
         if (!session) {
             return res.status(401).json({ error: 'Invalid or expired session' });
         }
@@ -249,10 +249,8 @@ app.post('/api/giveaway/create', async (req, res) => {
             return res.status(403).json({ error: 'Unauthorized: Only airfalconx can create giveaways' });
         }
 
-        // Deactivate existing giveaways
         await Giveaway.updateMany({ active: true }, { $set: { active: false } });
 
-        // Create new giveaway
         const giveaway = await Giveaway.create({ pointsRequired });
         res.json({ message: 'Giveaway created successfully', giveaway });
     } catch (error) {
@@ -307,7 +305,6 @@ app.post('/api/giveaway/enter', async (req, res) => {
             return res.status(400).json({ error: 'Already entered this giveaway' });
         }
 
-        // Check user points
         const pointsResponse = await axios.get(`https://api.streamelements.com/kappa/v2/points/${STREAMELEMENTS_CHANNEL_ID}/${username}`, {
             headers: {
                 'Authorization': `Bearer ${STREAMELEMENTS_JWT}`
@@ -319,7 +316,6 @@ app.post('/api/giveaway/enter', async (req, res) => {
             return res.status(400).json({ error: 'Insufficient points' });
         }
 
-        // Deduct points
         const deductResponse = await axios.put(
             `https://api.streamelements.com/kappa/v2/points/${STREAMELEMENTS_CHANNEL_ID}/${username}/${-giveaway.pointsRequired}`,
             {},
@@ -330,7 +326,6 @@ app.post('/api/giveaway/enter', async (req, res) => {
             }
         );
 
-        // Update giveaway participants
         await Giveaway.updateOne(
             { _id: giveaway._id },
             { $push: { participants: username } }
@@ -405,4 +400,5 @@ app.post('/api/giveaway/win', async (req, res) => {
     }
 });
 
-app.listen(3000, () => console.log('Server running on http://localhost:3000'));
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
